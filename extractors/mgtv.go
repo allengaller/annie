@@ -2,6 +2,7 @@ package extractors
 
 import (
 	"encoding/json"
+	// "fmt"
 	"strconv"
 	"strings"
 
@@ -60,6 +61,12 @@ func mgtvM3u8(url string) ([]mgtvURLInfo, int64) {
 	return data, totalSize
 }
 
+var mgtvQuality = map[string]string{
+	"3": "hd", // 超清
+	"2": "sd", // 高清
+	"1": "ld", // 标清
+}
+
 // Mgtv download function
 func Mgtv(url string) downloader.VideoData {
 	html := request.Get(url)
@@ -77,32 +84,46 @@ func Mgtv(url string) downloader.VideoData {
 	title := strings.TrimSpace(
 		mgtvData.Data.Info.Title + " " + mgtvData.Data.Info.Desc,
 	)
-	stream := mgtvData.Data.Stream
-	video := stream[len(stream)-1] // best quality?
-	// real download address
+	streams := mgtvData.Data.Stream
 	var addr mgtvVideoAddr
-	json.Unmarshal(
-		[]byte(request.Get(mgtvData.Data.StreamDomain[0]+video.URL)), &addr,
-	)
-	m3u8URLs, totalSize := mgtvM3u8(addr.Info)
-	var urls []downloader.URLData
-	var temp downloader.URLData
-	for _, u := range m3u8URLs {
-		temp = downloader.URLData{
-			URL:  u.URL,
-			Size: u.Size,
-			Ext:  "ts",
+	format := map[string]downloader.FormatData{}
+	for _, stream := range streams {
+		// real download address
+		addr = mgtvVideoAddr{}
+		json.Unmarshal(
+			[]byte(request.Get(mgtvData.Data.StreamDomain[0]+stream.URL)), &addr,
+		)
+		m3u8URLs, totalSize := mgtvM3u8(addr.Info)
+		urls := []downloader.URLData{}
+		var temp downloader.URLData
+		for _, u := range m3u8URLs {
+			temp = downloader.URLData{
+				URL:  u.URL,
+				Size: u.Size,
+				Ext:  "ts",
+			}
+			urls = append(urls, temp)
 		}
-		urls = append(urls, temp)
+		format[mgtvQuality[stream.Def]] = downloader.FormatData{
+			URLs:    urls,
+			Size:    totalSize,
+			Quality: stream.Name,
+		}
 	}
-	data := downloader.VideoData{
+	// best quality
+	for _, quality := range []string{"hd", "sd", "ld"} {
+		if data, ok := format[quality]; ok {
+			format["default"] = data
+			delete(format, quality)
+			break
+		}
+	}
+	extractedData := downloader.VideoData{
 		Site:    "芒果TV mgtv.com",
 		Title:   title,
 		Type:    "video",
-		URLs:    urls,
-		Size:    totalSize,
-		Quality: video.Name,
+		Formats: format,
 	}
-	data.Download(url)
-	return data
+	extractedData.Download(url)
+	return extractedData
 }
